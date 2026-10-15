@@ -1,0 +1,89 @@
+{
+  "title": "Relay M-Bus",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to a Relay M-Bus logger",
+        "description": "Retrieve the logger's configured meter inventory without reading measurements or scanning the bus. You will choose meters next. Prefer polling every 15 minutes or longer. The local TCP connection is unencrypted. Disconnect FSERVICE and other clients before continuing.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "password": "Service passcode",
+          "scan_interval": "Polling interval (minutes)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure gateway connection",
+        "description": "Enter the endpoint and service passcode to refresh the configured inventory without reading measurements. Confirm your meter selection next.",
+        "data": {"host": "Host", "port": "Port", "password": "Service passcode", "scan_interval": "Polling interval (minutes)"}
+      },
+      "meters": {
+        "title": "Choose meters to monitor",
+        "description": "Select at least one meter you are authorized to monitor. No measurements are read until setup completes. Existing selections marked unavailable are absent from the refreshed inventory; keep or remove them explicitly.",
+        "data": {"meter_ids": "Selected meters"}
+      },
+      "reauth_confirm": {
+        "title": "Authenticate gateway",
+        "description": "Enter the eight-digit service passcode. Unexpected service replies alone do not imply a wrong passcode.",
+        "data": {"password": "Service passcode"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to retrieve the logger inventory. Check the endpoint and passcode, disconnect other gateway clients, and retry.",
+      "no_meters": "The logger has no configured meters. Check its configuration and retry.",
+      "invalid_auth": "The gateway explicitly rejected authentication.",
+      "invalid_host": "Enter a hostname or IP address, without a URL or port.",
+      "invalid_password": "Enter exactly eight ASCII digits for the service passcode.",
+      "invalid_meter_ids": "Select at least one meter from the displayed inventory.",
+      "invalid_input": "Check the input. Ports must be 1–65535 and polling intervals must be 5–1440 minutes."
+    },
+    "abort": {
+      "configuration_changed": "Settings changed while this form was open. Reopen it to retrieve a fresh inventory before selecting meters.",
+      "already_configured": "This gateway endpoint is already configured. Edit its options to select additional meters.",
+      "already_in_progress": "Configuration of this gateway is already in progress.",
+      "reconfigure_successful": "Gateway connection updated.",
+      "reauth_successful": "Authentication updated."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy": {"name": "Thermal energy{qualifier}"},
+      "volume": {"name": "Circulated volume{qualifier}"},
+      "volume_channel": {"name": "Volume{qualifier}"},
+      "power": {"name": "Thermal power{qualifier}"},
+      "volume_flow_rate": {"name": "Volume flow{qualifier}"},
+      "temperature_flow": {"name": "Supply temperature{qualifier}"},
+      "temperature_return": {"name": "Return temperature{qualifier}"},
+      "temperature_difference": {"name": "Temperature difference{qualifier}"},
+      "operating_time": {"name": "Operating time{qualifier}"},
+      "status": {"name": "Meter status"},
+      "last_successful_read": {"name": "Last successful read"},
+      "poll_duration": {"name": "Gateway poll duration"},
+      "coverage": {
+        "name": "Record coverage",
+        "state": {
+          "single_telegram": "Single telegram received",
+          "more_records_pending": "More records pending"
+        }
+      }
+    }
+  },
+  "options": {
+    "abort": {
+      "configuration_changed": "Settings changed while this form was open. Reopen it to retrieve a fresh inventory before selecting meters."
+    },
+    "step": {
+      "init": {
+        "title": "Meter selection and polling",
+        "description": "Choose from the refreshed logger inventory. Only selected meters are read after saving. Existing selections marked unavailable can be kept or removed explicitly. If inventory retrieval failed, submit again to retry. Prefer 15 minutes or longer. Disable the integration entry to pause polling for maintenance.",
+        "data": {"meter_ids": "Selected eight-digit meter IDs", "scan_interval": "Polling interval (minutes)"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to refresh the logger inventory. Check connectivity, disconnect other gateway clients, and submit again to retry. Existing settings have not changed.",
+      "no_meters": "The logger returned no configured meters. Check its configuration and submit again to retry. Existing settings have not changed.",
+      "invalid_auth": "The gateway explicitly rejected authentication. Reauthenticate the integration.",
+      "invalid_input": "Select at least one displayed meter and a polling interval of 5–1440 minutes."
+    }
+  }
+}

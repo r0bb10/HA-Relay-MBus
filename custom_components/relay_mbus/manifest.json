@@ -1,0 +1,12 @@
+{
+  "domain": "relay_mbus",
+  "name": "Relay M-Bus",
+  "codeowners": ["@r0bb10"],
+  "config_flow": true,
+  "documentation": "https://github.com/r0bb10/HA-Relay-MBus",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/r0bb10/HA-Relay-MBus/issues",
+  "requirements": [],
+  "version": "2026.10.1"
+}
