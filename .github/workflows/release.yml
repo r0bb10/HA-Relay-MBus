@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "[0-9][0-9][0-9][0-9].[0-9]*.[0-9]*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing DateVer tag matching manifest.json (e.g. 2026.10.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  hacs:
+    name: HACS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: hacs/action@main
+        with:
+          category: integration
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          comment: "false"
+          ignore: brands
+
+  hassfest:
+    name: Hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: home-assistant/actions/hassfest@master
+
+  release:
+    name: Package and publish
+    needs: [hacs, hassfest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - name: Check DateVer and build component-only ZIP
+        env:
+          RELEASE_ZIP: ${{ runner.temp }}/relay_mbus.zip
+        shell: python
+        run: |
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import zipfile
+
+          tag = os.environ["RELEASE_TAG"]
+          if not re.fullmatch(r"[0-9]{4}\.(?:[1-9]|1[0-2])\.(?:0|[1-9][0-9]*)", tag):
+              raise SystemExit("Use year.month.release, without a v prefix")
+          component = Path("custom_components/relay_mbus")
+          manifest = json.loads((component / "manifest.json").read_text())
+          if manifest["version"] != tag:
+              raise SystemExit("Release tag must match manifest.json; commit the version first")
+          hacs = json.loads(Path("hacs.json").read_text())
+          output = Path(os.environ["RELEASE_ZIP"])
+          if output.name != hacs["filename"]:
+              raise SystemExit("Release asset name differs from hacs.json")
+          tracked = subprocess.check_output(
+              ["git", "ls-files", "-z", "--", str(component)]
+          ).decode().split("\0")
+          files = sorted(Path(name) for name in tracked if name)
+          if not files or component / "manifest.json" not in files:
+              raise SystemExit("Tracked component manifest is missing")
+          license_path = Path("LICENSE")
+          if not license_path.is_file() or license_path.is_symlink():
+              raise SystemExit("Project LICENSE is missing or is a symlink")
+          subprocess.check_call(["git", "ls-files", "--error-unmatch", "--", "LICENSE"])
+          with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+              archive.write(license_path, "LICENSE")
+              for path in files:
+                  relative = path.relative_to(component)
+                  if path.is_symlink() or path.name.startswith("test_") or any(part.startswith(".") or part in (
+                      "__pycache__", "tests", "fixtures"
+                  ) for part in relative.parts) or path.suffix not in (".py", ".json"):
+                      raise SystemExit("Unexpected non-runtime file in component: " + str(relative))
+                  archive.write(path, relative.as_posix())
+          print(f"Built {output.name}: {len(files)} component files plus LICENSE, version {tag}")
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+          overwrite_files: false
+          fail_on_unmatched_files: true
+          files: ${{ runner.temp }}/relay_mbus.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
