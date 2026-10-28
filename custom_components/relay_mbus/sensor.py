@@ -22,11 +22,14 @@ from homeassistant.components.sensor import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import slugify
 
 from .coordinator import RelayCoordinator
 from .entity import RelayMeterEntity, meter_identity
 from .models import MeterData, Record
+from .const import DOMAIN
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,6 +45,7 @@ DESCRIPTIONS = {
         device_class=device_class,
         state_class=state_class,
         entity_category=EntityCategory.DIAGNOSTIC if quantity == "operating_time" else None,
+        entity_registry_enabled_default=quantity != "operating_time",
     )
     for quantity, unit, device_class, state_class in (
         ("energy", "kWh", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING),
@@ -58,10 +62,12 @@ DESCRIPTIONS = {
 }
 
 DIAGNOSTICS = (
-    SensorEntityDescription(key="status", translation_key="status", entity_category=EntityCategory.DIAGNOSTIC),
+    # Raw header status is not the Sontex detailed-error register. Keep opt-in
+    # until a model/firmware-specific mapping can be established without guesses.
+    SensorEntityDescription(key="status", translation_key="status", entity_category=EntityCategory.DIAGNOSTIC, entity_registry_enabled_default=False),
     SensorEntityDescription(key="last_successful_read", translation_key="last_successful_read", device_class=SensorDeviceClass.TIMESTAMP, entity_category=EntityCategory.DIAGNOSTIC),
-    SensorEntityDescription(key="poll_duration", translation_key="poll_duration", device_class=SensorDeviceClass.DURATION, native_unit_of_measurement="s", state_class=SensorStateClass.MEASUREMENT, entity_category=EntityCategory.DIAGNOSTIC),
-    SensorEntityDescription(key="coverage", translation_key="coverage", device_class=SensorDeviceClass.ENUM, options=["single_telegram", "more_records_pending"], entity_category=EntityCategory.DIAGNOSTIC),
+    SensorEntityDescription(key="poll_duration", translation_key="poll_duration", device_class=SensorDeviceClass.DURATION, native_unit_of_measurement="s", state_class=SensorStateClass.MEASUREMENT, entity_category=EntityCategory.DIAGNOSTIC, entity_registry_enabled_default=False),
+    SensorEntityDescription(key="coverage", translation_key="coverage", device_class=SensorDeviceClass.ENUM, options=["single_telegram", "more_records_pending"], entity_category=EntityCategory.DIAGNOSTIC, entity_registry_enabled_default=False),
 )
 
 
@@ -72,13 +78,82 @@ def _description(record: Record) -> RelaySensorDescription | None:
         return None
     if record.function not in (0, 1, 2, 3):
         return None
+    # Default installation semantics: combined heating/cooling meters, with
+    # domestic hot water on IN1 and cold water on IN2. These are not inferred
+    # from generic M-Bus metadata; see the installation assumptions in README.
+    if record.quantity == "energy" and record.module == 0 and record.tariff in (0, 1):
+        description = replace(
+            description,
+            translation_key="heating_energy" if record.tariff == 0 else "cooling_energy",
+        )
     if record.quantity == "volume" and record.module:
-        # Pulse-input plumbing is unknown; do not call these heating-circuit or
-        # domestic-water counters merely because they report a volume.
-        description = replace(description, translation_key="volume_channel")
+        if record.module in (1, 2) and record.tariff == 0:
+            description = replace(
+                description,
+                translation_key="hot_water" if record.module == 1 else "cold_water",
+                device_class=SensorDeviceClass.WATER,
+            )
+        else:
+            description = replace(description, translation_key="volume_channel")
     if record.storage != 0 or record.function != 0:
         return replace(description, state_class=None, entity_category=EntityCategory.DIAGNOSTIC, entity_registry_enabled_default=False)
     return description
+
+
+def _qualifiers(record: Record, translation_key: str) -> list[str]:
+    """Keep addressing metadata in names unless the label already explains it."""
+    qualifiers = []
+    if record.module and translation_key not in ("hot_water", "cold_water"):
+        qualifiers.append(f"module {record.module}")
+    if record.tariff and translation_key != "cooling_energy":
+        qualifiers.append(f"tariff {record.tariff}")
+    if record.storage:
+        qualifiers.append(f"storage {record.storage}")
+    if record.function:
+        qualifiers.append({1: "maximum", 2: "minimum", 3: "error"}[record.function])
+    return qualifiers
+
+
+@callback
+def _async_align_entity_id(
+    hass: HomeAssistant, entry: ConfigEntry, meter: MeterData, record: Record,
+    description: RelaySensorDescription,
+) -> None:
+    """Rename recognized legacy default IDs without replacing registry entries.
+
+    Custom IDs are left alone. Registry APIs handle name collisions; unique IDs,
+    disabled state, user names and device associations remain unchanged.
+    """
+    names = {
+        "heating_energy": ("Thermal energy", "Heating energy"),
+        "cooling_energy": ("Thermal energy", "Cooling energy"),
+        "hot_water": ("Volume", "Hot-water consumption"),
+        "cold_water": ("Volume", "Cold-water consumption"),
+    }
+    if description.translation_key not in names:
+        return
+    registry = er.async_get(hass)
+    unique_id = f"{meter_identity(meter)}_record_{record.key}"
+    entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+    if entity_id is None:
+        return
+    existing = registry.async_get(entity_id)
+    if existing is None or existing.config_entry_id != entry.entry_id:
+        return
+    old_name, new_name = names[description.translation_key]
+    old_suffix = slugify(" ".join([old_name, *_qualifiers(record, "legacy")]))
+    object_id = entity_id.removeprefix("sensor.")
+    # Only the original device-derived defaults, not arbitrary custom IDs.
+    prefix = slugify(f"M-Bus {meter.meter_id}") + "_"
+    if object_id != prefix + old_suffix:
+        return
+    new_suffix = slugify(" ".join([new_name, *_qualifiers(record, description.translation_key)]))
+    # The available-ID API was renamed after the minimum supported HA version.
+    available_id = getattr(registry, "async_get_available_entity_id", None)
+    if available_id is None:
+        available_id = registry.async_generate_entity_id
+    new_id = available_id("sensor", prefix + new_suffix)
+    registry.async_update_entity(entity_id, new_entity_id=new_id)
 
 
 async def async_setup_entry(
@@ -110,6 +185,7 @@ async def async_setup_entry(
                 description = _description(record)
                 if counts[record.key] == 1 and description is not None and key not in known:
                     known.add(key)
+                    _async_align_entity_id(hass, entry, meter, record, description)
                     entities.append(RelayRecordSensor(coordinator, meter, record, description))
         if entities:
             async_add_entities(entities)
@@ -131,15 +207,7 @@ class RelayRecordSensor(RelayMeterEntity, SensorEntity):
         self._unit = record.unit
         self._address = (record.function, record.storage, record.tariff, record.module)
         self._attr_unique_id = f"{self._meter_identity}_record_{record.key}"
-        qualifiers = []
-        if record.module:
-            qualifiers.append(f"module {record.module}")
-        if record.tariff:
-            qualifiers.append(f"tariff {record.tariff}")
-        if record.storage:
-            qualifiers.append(f"storage {record.storage}")
-        if record.function:
-            qualifiers.append({1: "maximum", 2: "minimum", 3: "error"}[record.function])
+        qualifiers = _qualifiers(record, description.translation_key)
         self._attr_translation_placeholders = {"qualifier": f" ({', '.join(qualifiers)})" if qualifiers else ""}
         self._attr_extra_state_attributes = {
             "function": record.function,

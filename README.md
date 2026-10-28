@@ -24,11 +24,13 @@ For manual installation, extract the release ZIP into
 
 ## Sensor meanings
 
-- **Thermal energy:** cumulative delivered thermal energy.
+- **Heating energy / cooling energy:** separate cumulative thermal-energy counters;
+  the main register is heating and tariff 1 is cooling.
 - **Circulated volume:** heating/cooling circuit water, not domestic water usage.
 - **Thermal power / volume flow:** instantaneous circuit measurements.
 - **Supply / return temperature:** circuit temperatures.
-- **Tariff / module counters:** heating/cooling tariff mapping.
+- **Hot-water / cold-water consumption:** cumulative domestic water volumes from
+  external pulse inputs IN1 (module 1) and IN2 (module 2), respectively.
 
 Failed or missing readings become unavailable, never fake zero values. Use
 Home Assistant's Utility Meter helpers for daily/monthly consumption. Diagnostics

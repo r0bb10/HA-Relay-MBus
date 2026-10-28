@@ -48,8 +48,12 @@
   "entity": {
     "sensor": {
       "energy": {"name": "Thermal energy{qualifier}"},
+      "heating_energy": {"name": "Heating energy{qualifier}"},
+      "cooling_energy": {"name": "Cooling energy{qualifier}"},
       "volume": {"name": "Circulated volume{qualifier}"},
       "volume_channel": {"name": "Volume{qualifier}"},
+      "hot_water": {"name": "Hot-water consumption{qualifier}"},
+      "cold_water": {"name": "Cold-water consumption{qualifier}"},
       "power": {"name": "Thermal power{qualifier}"},
       "volume_flow_rate": {"name": "Volume flow{qualifier}"},
       "temperature_flow": {"name": "Supply temperature{qualifier}"},
